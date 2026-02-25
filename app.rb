@@ -43,6 +43,10 @@ get '/' do
   "#{CSS_STYLE}
   <div class='container'>
     <h1>⚖️ 護理勞權 AI 律師</h1>
+    <div style="background-color: #fff5f5; border: 1px solid #feb2b2; padding: 10px; border-radius: 8px; margin-bottom: 20px; font-size: 0.85rem; color: #c53030;">
+  ⚠️ <strong>免責聲明：</strong>本工具由 AI 產生，回覆內容僅供一般參考，不構成正式法律意見。
+  若遇重大爭議，請務必諮詢工會律師或勞動部法律顧問。
+</div>
     <p style='text-align:center; color:#636e72;'>讓專業法律成為你最強大的後盾</p>
     <form action='/analyze' method='post'>
       <textarea name='speech' placeholder='請貼上主管布達的話，例如：明天病人少改休負時數...' required></textarea>
