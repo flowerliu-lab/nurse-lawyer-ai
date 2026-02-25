@@ -1,68 +1,107 @@
 require 'sinatra'
 require 'net/http'
 require 'json'
+require 'base64'
 
-GEMINI_API_KEY = ENV['GEMINI_API_KEY'] || "AIzaSyAyb8xJevoV9ADxlg1gyNO1wyoSkEHSp50"
+# 設定 API Key
+GEMINI_API_KEY = ENV['GEMINI_API_KEY']
 
-# --- 背景邏輯：自動找尋 AI 模型並分析 ---
-def ask_lawyer(user_input)
-  list_uri = URI("https://generativelanguage.googleapis.com/v1beta/models?key=#{GEMINI_API_KEY}")
-  begin
-    list_res = Net::HTTP.get(list_uri)
-    models_data = JSON.parse(list_res)
-    available_model = models_data["models"]&.find { |m| m["supportedGenerationMethods"].include?("generateContent") }
-    model_name = available_model ? available_model["name"] : "models/gemini-1.5-flash"
-
-    uri = URI("https://generativelanguage.googleapis.com/v1beta/#{model_name}:generateContent?key=#{GEMINI_API_KEY}")
-    prompt = "你是一位精通台灣勞基法與護理人員法規的資深律師。請鑑定這段主管的話：『#{user_input}』。請務必列出具體違反的【法律條文編號】，並給予護理師實戰應對建議。"
-    
-    payload = { contents: [{ parts: [{ text: prompt }] }] }.to_json
-    response = Net::HTTP.post(uri, payload, "Content-Type" => "application/json")
-    res = JSON.parse(response.body)
-    res.dig("candidates", 0, "content", "parts", 0, "text") || "AI 律師思考中，請稍後..."
-  rescue => e
-    "❌ 系統錯誤：#{e.message}"
+def ask_gemini(text_input, file_data = nil, mime_type = nil)
+  uri = URI("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")
+  
+  # 建立基礎 Prompt
+  prompt = "你是一位精通台灣勞基法與護理人員法規的資深律師。請鑑定以下內容（含文字、截圖或語音描述）是否違法，並給予護理師專業建議："
+  
+  # 建立多模態 Payload
+  parts = [{ text: "#{prompt}\n#{text_input}" }]
+  if file_data && mime_type
+    parts << { inline_data: { mime_type: mime_type, data: file_data } }
   end
+
+  payload = { contents: [{ parts: parts }] }.to_json
+  
+  response = Net::HTTP.post(uri, payload, "Content-Type" => "application/json")
+  res_body = JSON.parse(response.body)
+  res_body.dig("candidates", 0, "content", "parts", 0, "text") || "⚠️ 鑑定失敗，請稍後再試。"
+rescue => e
+  "❌ 發生錯誤：#{e.message}"
 end
 
-# --- 漂亮設計樣式 (CSS) ---
-CSS_STYLE = "
-<style>
-  body { font-family: 'PingFang TC', sans-serif; background-color: #f0f7ff; color: #2d3436; margin: 0; padding: 20px; }
-  .container { max-width: 650px; margin: 50px auto; background: white; padding: 40px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); }
-  h1 { color: #007aff; text-align: center; font-size: 28px; }
-  textarea { width: 100%; height: 160px; border: 2px solid #e1e8ed; border-radius: 16px; padding: 15px; font-size: 16px; box-sizing: border-box; margin-top: 20px; }
-  button { width: 100%; background: #007aff; color: white; padding: 16px; border: none; border-radius: 16px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 20px; }
-  .report { background: #f8faff; border-left: 6px solid #007aff; padding: 25px; border-radius: 12px; line-height: 1.8; margin-top: 20px; font-size: 17px; }
-  .back-link { display: block; text-align: center; margin-top: 30px; color: #007aff; text-decoration: none; font-weight: bold; }
-</style>
-"
-
-# --- 網頁路由 ---
 get '/' do
-  "#{CSS_STYLE}
-  <div class='container'>
-    <h1>⚖️ 護理勞權 AI 律師</h1>
-    <div style="background-color: #fff5f5; border: 1px solid #feb2b2; padding: 10px; border-radius: 8px; margin-bottom: 20px; font-size: 0.85rem; color: #c53030;">
-  ⚠️ <strong>免責聲明：</strong>本工具由 AI 產生，回覆內容僅供一般參考，不構成正式法律意見。
-  若遇重大爭議，請務必諮詢工會律師或勞動部法律顧問。
-</div>
-    <p style='text-align:center; color:#636e72;'>讓專業法律成為你最強大的後盾</p>
-    <form action='/analyze' method='post'>
-      <textarea name='speech' placeholder='請貼上主管布達的話，例如：明天病人少改休負時數...' required></textarea>
-      <button type='submit'>開始法律鑑定</button>
-    </form>
-  </div>"
+  erb :index
 end
 
 post '/analyze' do
-  result = ask_lawyer(params[:speech])
-  "#{CSS_STYLE}
-  <div class='container'>
-    <h1>📋 鑑定報告</h1>
-    <div class='report'>
-      #{result.gsub("\n", "<br>")}
-    </div>
-    <a href='/' class='back-link'>← 返回重新鑑定</a>
-  </div>"
+  user_text = params[:user_input]
+  file = params[:attachment]
+  
+  file_base64 = nil
+  mime_type = nil
+
+  if file
+    file_base64 = Base64.strict_encode64(file[:tempfile].read)
+    mime_type = file[:type]
+  end
+
+  @result = ask_gemini(user_text, file_base64, mime_type)
+  erb :result
 end
+
+__END__
+
+@@index
+<!DOCTYPE html>
+<html>
+<head>
+  <title>護理勞權 AI 律師</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: sans-serif; background-color: #f7fafc; padding: 20px; text-align: center; }
+    .card { background: white; max-width: 500px; margin: 0 auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .disclaimer { background-color: #fff5f5; border: 1px solid #feb2b2; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 0.8rem; color: #c53030; text-align: left; }
+    textarea { width: 100%; height: 100px; padding: 10px; border: 1px solid #cbd5e0; border-radius: 8px; box-sizing: border-box; }
+    .upload-section { margin: 20px 0; text-align: left; font-size: 0.9rem; }
+    button { width: 100%; background: #3182ce; color: white; padding: 12px; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>⚖️ 護理勞權 AI 律師</h2>
+    
+    <div class="disclaimer">
+      ⚠️ <strong>免責聲明：</strong>本工具由 AI 產生，回覆僅供一般參考。若遇爭議，請諮詢工會或法律顧問。
+    </div>
+
+    <form action="/analyze" method="post" enctype="multipart/form-data">
+      <textarea name="user_input" placeholder="請貼上主管的話，或上傳截圖/錄音進行分析..."></textarea>
+      
+      <div class="upload-section">
+        <label>📤 上傳截圖或錄音 (JPG/PNG/MP3)：</label>
+        <input type="file" name="attachment" accept="image/*,audio/*">
+      </div>
+
+      <button type="submit">開始法律鑑定</button>
+    </form>
+  </div>
+</body>
+</html>
+
+@@result
+<html>
+<head>
+  <title>鑑定結果</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: sans-serif; background-color: #f7fafc; padding: 20px; }
+    .result-box { background: white; max-width: 600px; margin: 0 auto; padding: 25px; border-radius: 12px; line-height: 1.6; }
+    .back-link { display: inline-block; margin-top: 20px; color: #3182ce; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="result-box">
+    <h3>🔍 法律鑑定報告：</h3>
+    <div><%= @result.gsub("\n", "<br>") %></div>
+    <a href="/" class="back-link">← 返回重新鑑定</a>
+  </div>
+</body>
+</html>
