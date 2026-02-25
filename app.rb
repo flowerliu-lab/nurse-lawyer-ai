@@ -3,28 +3,46 @@ require 'net/http'
 require 'json'
 require 'base64'
 
-# 設定 API Key
+# 確保讀取 Render 上的環境變數
 GEMINI_API_KEY = ENV['GEMINI_API_KEY']
 
 def ask_gemini(text_input, file_data = nil, mime_type = nil)
+  # 使用穩定版 v1beta 介面
   uri = URI("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")
   
-  # 建立基礎 Prompt
-  prompt = "你是一位精通台灣勞基法與護理人員法規的資深律師。請鑑定以下內容（含文字、截圖或語音描述）是否違法，並給予護理師專業建議："
+  prompt = "你是一位精通台灣勞基法與護理法規的律師。請針對以下文字、截圖或語音內容鑑定是否違法，並給予護理師具體且專業的法律建議："
   
-  # 建立多模態 Payload
+  # 建立內容結構
   parts = [{ text: "#{prompt}\n#{text_input}" }]
+  
+  # 如果有檔案（圖片或語音），則加入 inline_data
   if file_data && mime_type
     parts << { inline_data: { mime_type: mime_type, data: file_data } }
   end
 
-  payload = { contents: [{ parts: parts }] }.to_json
+  payload = {
+    contents: [{ parts: parts }]
+  }.to_json
   
-  response = Net::HTTP.post(uri, payload, "Content-Type" => "application/json")
+  # 設定 HTTP 請求
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  request = Net::HTTP::Post.new(uri.request_uri, { 'Content-Type' => 'application/json' })
+  request.body = payload
+  
+  response = http.request(request)
   res_body = JSON.parse(response.body)
-  res_body.dig("candidates", 0, "content", "parts", 0, "text") || "⚠️ 鑑定失敗，請稍後再試。"
+  
+  # 解析回傳結果
+  answer = res_body.dig("candidates", 0, "content", "parts", 0, "text")
+  
+  if answer
+    answer
+  else
+    "⚠️ 鑑定失敗。錯誤原因：#{res_body['error']['message'] if res_body['error']}"
+  end
 rescue => e
-  "❌ 發生錯誤：#{e.message}"
+  "❌ 系統連線異常：#{e.message}"
 end
 
 get '/' do
@@ -32,13 +50,14 @@ get '/' do
 end
 
 post '/analyze' do
-  user_text = params[:user_input]
+  user_text = params[:user_input] || ""
   file = params[:attachment]
   
   file_base64 = nil
   mime_type = nil
 
-  if file
+  # 處理上傳檔案
+  if file && file[:tempfile]
     file_base64 = Base64.strict_encode64(file[:tempfile].read)
     mime_type = file[:type]
   end
@@ -56,30 +75,29 @@ __END__
   <title>護理勞權 AI 律師</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; background-color: #f7fafc; padding: 20px; text-align: center; }
-    .card { background: white; max-width: 500px; margin: 0 auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .disclaimer { background-color: #fff5f5; border: 1px solid #feb2b2; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 0.8rem; color: #c53030; text-align: left; }
-    textarea { width: 100%; height: 100px; padding: 10px; border: 1px solid #cbd5e0; border-radius: 8px; box-sizing: border-box; }
-    .upload-section { margin: 20px 0; text-align: left; font-size: 0.9rem; }
-    button { width: 100%; background: #3182ce; color: white; padding: 12px; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; }
+    body { font-family: sans-serif; background-color: #f0f4f8; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .card { background: white; width: 100%; max-width: 500px; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); text-align: center; }
+    h2 { color: #2d3748; margin-bottom: 10px; }
+    .disclaimer { background-color: #fff5f5; border: 1px solid #feb2b2; padding: 12px; border-radius: 8px; font-size: 0.8rem; color: #c53030; margin-bottom: 20px; text-align: left; line-height: 1.4; }
+    textarea { width: 100%; height: 120px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; box-sizing: border-box; font-size: 1rem; resize: none; }
+    .upload-area { margin: 20px 0; text-align: left; border: 2px dashed #e2e8f0; padding: 15px; border-radius: 8px; }
+    label { font-size: 0.9rem; font-weight: bold; color: #4a5568; display: block; margin-bottom: 8px; }
+    button { width: 100%; background-color: #4299e1; color: white; padding: 14px; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+    button:hover { background-color: #3182ce; }
   </style>
 </head>
 <body>
   <div class="card">
     <h2>⚖️ 護理勞權 AI 律師</h2>
-    
     <div class="disclaimer">
-      ⚠️ <strong>免責聲明：</strong>本工具由 AI 產生，回覆僅供一般參考。若遇爭議，請諮詢工會或法律顧問。
+      ⚠️ <strong>免責聲明：</strong>本工具由 AI 產生，回覆僅供一般參考。若遇重大勞資爭議，請諮詢專業法律人員或相關工會。
     </div>
-
     <form action="/analyze" method="post" enctype="multipart/form-data">
-      <textarea name="user_input" placeholder="請貼上主管的話，或上傳截圖/錄音進行分析..."></textarea>
-      
-      <div class="upload-section">
-        <label>📤 上傳截圖或錄音 (JPG/PNG/MP3)：</label>
+      <textarea name="user_input" placeholder="請在此輸入對話文字，或直接上傳截圖與錄音..."></textarea>
+      <div class="upload-area">
+        <label>📤 附件上傳 (截圖或語音)：</label>
         <input type="file" name="attachment" accept="image/*,audio/*">
       </div>
-
       <button type="submit">開始法律鑑定</button>
     </form>
   </div>
@@ -89,19 +107,20 @@ __END__
 @@result
 <html>
 <head>
-  <title>鑑定結果</title>
+  <title>鑑定報告</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; background-color: #f7fafc; padding: 20px; }
-    .result-box { background: white; max-width: 600px; margin: 0 auto; padding: 25px; border-radius: 12px; line-height: 1.6; }
-    .back-link { display: inline-block; margin-top: 20px; color: #3182ce; text-decoration: none; }
+    body { font-family: sans-serif; background-color: #f0f4f8; padding: 20px; line-height: 1.6; color: #2d3748; }
+    .container { background: white; max-width: 600px; margin: 0 auto; padding: 30px; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    h3 { border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; color: #3182ce; }
+    .back-btn { display: inline-block; margin-top: 25px; color: #4299e1; text-decoration: none; font-weight: bold; }
   </style>
 </head>
 <body>
-  <div class="result-box">
+  <div class="container">
     <h3>🔍 法律鑑定報告：</h3>
-    <div><%= @result.gsub("\n", "<br>") %></div>
-    <a href="/" class="back-link">← 返回重新鑑定</a>
+    <div><%= @result.to_s.gsub("\n", "<br>") %></div>
+    <a href="/" class="back-btn">← 返回重新鑑定</a>
   </div>
 </body>
 </html>
