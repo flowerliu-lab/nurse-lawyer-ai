@@ -106,4 +106,103 @@ __END__
     <a href="/" class="back">← 返回重新鑑定</a>
   </div>
 </body>
+</html>require 'sinatra'
+require 'net/http'
+require 'json'
+require 'base64'
+
+GEMINI_API_KEY = ENV['GEMINI_API_KEY']
+
+def ask_gemini(text_input, file_data = nil, mime_type = nil)
+  # 修正重點：確保路徑完整包含 models/ 編號
+  url_string = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}"
+  uri = URI(url_string)
+  
+  prompt = "你是一位精通台灣勞基法與護理法規的律師。請針對以下文字、截圖或語音內容鑑定是否違法，並給予具體專業建議："
+  
+  parts = [{ text: "#{prompt}\n#{text_input}" }]
+  if file_data && mime_type
+    parts << { inline_data: { mime_type: mime_type, data: file_data } }
+  end
+
+  payload = { contents: [{ parts: parts }] }.to_json
+  
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  request = Net::HTTP::Post.new(uri.request_uri, { 'Content-Type' => 'application/json' })
+  request.body = payload
+  
+  response = http.request(request)
+  res_body = JSON.parse(response.body)
+  
+  # 如果 API 回報錯誤，直接顯示詳細原因以便排除
+  if res_body['error']
+    return "⚠️ API 錯誤：#{res_body['error']['message']}"
+  end
+
+  res_body.dig("candidates", 0, "content", "parts", 0, "text") || "⚠️ 無法取得鑑定結果，請重新嘗試。"
+rescue => e
+  "❌ 連線異常：#{e.message}"
+end
+
+get '/' do
+  erb :index
+end
+
+post '/analyze' do
+  user_text = params[:user_input] || ""
+  file = params[:attachment]
+  
+  file_base64 = nil
+  mime_type = nil
+
+  if file && file[:tempfile]
+    file_base64 = Base64.strict_encode64(file[:tempfile].read)
+    mime_type = file[:type]
+  end
+
+  @result = ask_gemini(user_text, file_base64, mime_type)
+  erb :result
+end
+
+__END__
+
+@@index
+<!DOCTYPE html>
+<html>
+<head>
+  <title>護理勞權 AI 律師</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: sans-serif; background: linear-gradient(135deg, #eef2f3 0%, #8e9eab 100%); margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .card { background: white; width: 100%; max-width: 500px; padding: 30px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+    .disclaimer { background-color: #fff5f5; border: 1px solid #feb2b2; padding: 12px; border-radius: 8px; font-size: 0.8rem; color: #c53030; margin-bottom: 20px; }
+    textarea { width: 100%; height: 120px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 12px; box-sizing: border-box; font-size: 1rem; margin-bottom: 15px; }
+    .upload-box { border: 2px dashed #cbd5e0; padding: 15px; border-radius: 12px; margin-bottom: 20px; text-align: left; }
+    button { width: 100%; background: #3182ce; color: white; padding: 14px; border: none; border-radius: 12px; font-size: 1.1rem; font-weight: bold; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="text-align: center;">⚖️ 護理勞權 AI 律師</h2>
+    <div class="disclaimer">⚠️ 免責聲明：本工具由 AI 產生，僅供參考。</div>
+    <form action="/analyze" method="post" enctype="multipart/form-data">
+      <textarea name="user_input" placeholder="請輸入對話文字..."></textarea>
+      <div class="upload-box">
+        <label style="font-weight: bold; font-size: 0.9rem;">📤 上傳附件 (截圖或錄音)：</label>
+        <input type="file" name="attachment" accept="image/*,audio/*" style="margin-top: 10px; width: 100%;">
+      </div>
+      <button type="submit">開始法律鑑定</button>
+    </form>
+  </div>
+</body>
 </html>
+
+@@result
+<html>
+<head>
+  <title>鑑定報告</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: sans-serif; background: #f7fafc; padding: 20px; line-height: 1.7; }
+    .container { background: white; max-width
