@@ -7,24 +7,19 @@ require 'base64'
 GEMINI_API_KEY = ENV['GEMINI_API_KEY']
 
 def ask_gemini(text_input, file_data = nil, mime_type = nil)
-  # 關鍵修正：確保模型路徑包含完整的 models/ 標籤
-  uri = URI("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")
+  # 🏆 核心修正：使用 v1 正式版網址並簡化路徑
+  uri = URI("https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")
   
-  prompt = "你是一位精通台灣勞動基準法與護理法規的專業律師。請針對以下文字、截圖或語音內容進行法律鑑定，給予具體專業建議："
+  prompt = "你是一位精通台灣勞動基準法與護理法規的專業律師。請針對以下文字、截圖或語音內容進行法律鑑定，指出是否違法並提供建議："
   
-  # 重新構建更嚴謹的 JSON 結構
+  # 構建官方標準 Payload 結構
   contents = {
-    parts: [
-      { text: "#{prompt}\n#{text_input}" }
-    ]
+    parts: [{ text: "#{prompt}\n#{text_input}" }]
   }
   
   if file_data && mime_type
     contents[:parts] << {
-      inline_data: {
-        mime_type: mime_type,
-        data: file_data
-      }
+      inline_data: { mime_type: mime_type, data: file_data }
     }
   end
 
@@ -38,16 +33,16 @@ def ask_gemini(text_input, file_data = nil, mime_type = nil)
   response = http.request(request)
   res_body = JSON.parse(response.body)
   
-  # 如果 API 回傳錯誤，顯示清楚的訊息
-  if res_body['error']
-    "⚠️ API 錯誤：#{res_body['error']['message']}"
-  elsif res_body['candidates'] && res_body['candidates'][0]['content']
+  # 診斷邏輯
+  if res_body['candidates'] && res_body['candidates'][0]['content']
     res_body['candidates'][0]['content']['parts'][0]['text']
+  elsif res_body['error']
+    "⚠️ API 錯誤：#{res_body['error']['message']}\n(提示：請確認 API KEY 是否正確且已啟用 Gemini 1.5)"
   else
-    "⚠️ 鑑定暫時無法完成，請稍後再試。"
+    "⚠️ 回傳格式異常，請檢查日誌。"
   end
 rescue => e
-  "❌ 系統異常：#{e.message}"
+  "❌ 連線異常：#{e.message}"
 end
 
 get '/' do
@@ -90,9 +85,9 @@ __END__
 <body>
   <div class="card">
     <h2 style="text-align: center; margin-top: 0;">⚖️ 護理勞權 AI 律師</h2>
-    <div class="disclaimer">⚠️ 免責聲明：本工具由 AI 產生，僅供法律參考。若遇重大爭議請諮詢工會律師。</div>
+    <div class="disclaimer">⚠️ <strong>免責聲明：</strong>本工具僅供法律參考。若遇重大爭議請諮詢專業人員。</div>
     <form action="/analyze" method="post" enctype="multipart/form-data">
-      <textarea name="user_input" placeholder="請描述狀況，或上傳對話截圖..."></textarea>
+      <textarea name="user_input" placeholder="請描述狀況或上傳截圖..."></textarea>
       <div class="upload-box">
         <label style="font-weight: bold; font-size: 0.9rem; color: #4a5568;">📤 上傳附件 (截圖或錄音)：</label>
         <input type="file" name="attachment" accept="image/*,audio/*" style="margin-top: 10px; width: 100%;">
