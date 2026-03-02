@@ -15,9 +15,9 @@ end
 
 def ask_gemini(text_input, file_data = nil, mime_type = nil)
   # 🏆 最終對頻網址：v1beta 是目前最穩定支援多模態的路徑
-  uri = URI("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")
-  
-  prompt = "你是一位精通台灣勞動基準法與護理法規的專業律師。請針對以下文字、截圖或語音鑑定是否違法，並給予護理師具體且專業的建議："
+# 使用 v1beta 搭配 gemini-1.5-flash，這是目前 Cloud API 啟用後最相容的路徑
+# 使用 v1beta 搭配 gemini-1.5-flash，這是目前 Cloud API 啟用後最相容的路徑
+uri = URI("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")  prompt = "你是一位精通台灣勞動基準法與護理法規的專業律師。請針對以下文字、截圖或語音鑑定是否違法，並給予護理師具體且專業的建議："
   
   # 構建官方標準 Payload 結構
   contents = {
