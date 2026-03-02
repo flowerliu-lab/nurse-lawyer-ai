@@ -3,49 +3,56 @@ require 'net/http'
 require 'json'
 require 'base64'
 
-# 讀取環境變數
+# 讀取 Render 環境變數中的 API Key
+# 💡 提醒：請確保使用 Google Cloud 專案內產生的那組 Key
 GEMINI_API_KEY = ENV['GEMINI_API_KEY']
 
-def ask_gemini(text_input, file_data = nil, mime_type = nil)
-  # 🎯 策略：定義三種可能的網址格式，自動嘗試直到通為止
-  endpoints = [
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=#{GEMINI_API_KEY}",
-    "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=#{GEMINI_API_KEY}"
-  ]
-  
-  prompt = "你是一位精通台灣勞動基準法與護理法規的專業律師。請針對以下內容鑑定並給予建議：\n"
-  payload_obj = {
-    contents: [{
-      parts: [
-        { text: "#{prompt}#{text_input}" },
-        file_data ? { inline_data: { mime_type: mime_type, data: file_data } } : nil
-      ].compact
-    }]
-  }
-
-  final_response = "⚠️ 嘗試了所有連線路徑皆失敗，請確認 API 金鑰是否與專案匹配。"
-
-  endpoints.each do |url|
-    uri = URI(url)
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
-    request = Net::HTTP::Post.new(uri.request_uri, { 'Content-Type' => 'application/json' })
-    request.body = payload_obj.to_json
-    
-    response = http.request(request)
-    res_body = JSON.parse(response.body)
-
-    # 如果抓到內容，立刻回傳並結束循環
-    text = res_body.dig("candidates", 0, "content", "parts", 0, "text")
-    if text
-      return text
-    else
-      final_response = "⚠️ API 錯誤詳情：#{res_body.dig('error', 'message')}"
-    end
+helpers do
+  def h(text)
+    Rack::Utils.escape_html(text)
   end
+end
+
+def ask_gemini(text_input, file_data = nil, mime_type = nil)
+  # 🏆 最終對頻網址：v1beta 是目前最穩定支援多模態的路徑
+  uri = URI("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=#{GEMINI_API_KEY}")
   
-  final_response
+  prompt = "你是一位精通台灣勞動基準法與護理法規的專業律師。請針對以下文字、截圖或語音鑑定是否違法，並給予護理師具體且專業的建議："
+  
+  # 構建官方標準 Payload 結構
+  contents = {
+    parts: [
+      { text: "#{prompt}\n#{text_input}" }
+    ]
+  }
+  
+  # 如果有上傳檔案，加入 inline_data
+  if file_data && mime_type
+    contents[:parts] << {
+      inline_data: {
+        mime_type: mime_type,
+        data: file_data
+      }
+    }
+  end
+
+  payload = { contents: [contents] }.to_json
+  
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  request = Net::HTTP::Post.new(uri.request_uri, { 'Content-Type' => 'application/json' })
+  request.body = payload
+  
+  response = http.request(request)
+  res_body = JSON.parse(response.body)
+  
+  # 診斷與解析回傳內容
+  if res_body['candidates'] && res_body['candidates'][0]['content']
+    res_body['candidates'][0]['content']['parts'][0]['text']
+  else
+    error_msg = res_body.dig('error', 'message') || "AI 暫時無法回應"
+    "⚠️ 鑑定失敗。原因：#{error_msg}\n(請確認 Google Cloud API 狀態為『已啟用』)"
+  end
 rescue => e
   "❌ 系統連線異常：#{e.message}"
 end
@@ -57,8 +64,14 @@ end
 post '/analyze' do
   user_text = params[:user_input] || ""
   file = params[:attachment]
-  file_base64 = file ? Base64.strict_encode64(file[:tempfile].read) : nil
-  mime_type = file ? file[:type] : nil
+  
+  file_base64 = nil
+  mime_type = nil
+
+  if file && file[:tempfile]
+    file_base64 = Base64.strict_encode64(file[:tempfile].read)
+    mime_type = file[:type]
+  end
 
   @result = ask_gemini(user_text, file_base64, mime_type)
   erb :result
@@ -68,26 +81,56 @@ __END__
 
 @@index
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
+  <meta charset="UTF-8">
   <title>護理勞權 AI 律師</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-    .card { background: white; width: 100%; max-width: 500px; padding: 30px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-    textarea { width: 100%; height: 120px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 12px; box-sizing: border-box; font-size: 1rem; margin-bottom: 15px; }
-    .upload-box { border: 2px dashed #cbd5e0; padding: 15px; border-radius: 12px; margin-bottom: 20px; }
-    button { width: 100%; background: #3182ce; color: white; padding: 14px; border: none; border-radius: 12px; font-size: 1.1rem; font-weight: bold; cursor: pointer; }
+    body { 
+      font-family: 'PingFang TC', sans-serif; 
+      background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%); 
+      margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; 
+    }
+    .card { 
+      background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px);
+      width: 100%; max-width: 500px; padding: 35px; border-radius: 24px; 
+      box-shadow: 0 15px 35px rgba(0,0,0,0.1); border: 1px solid white;
+    }
+    h2 { color: #2d3748; text-align: center; margin-bottom: 25px; font-weight: 800; }
+    .disclaimer { 
+      background-color: #fff5f5; border: 1px solid #feb2b2; 
+      padding: 12px; border-radius: 10px; font-size: 0.8rem; color: #c53030; margin-bottom: 20px; 
+    }
+    textarea { 
+      width: 100%; height: 130px; padding: 15px; border: 1px solid #e2e8f0; 
+      border-radius: 15px; box-sizing: border-box; font-size: 1rem; margin-bottom: 20px;
+      resize: none; outline: none; transition: border 0.3s;
+    }
+    textarea:focus { border-color: #3182ce; box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.1); }
+    .upload-box { 
+      border: 2px dashed #cbd5e0; padding: 15px; border-radius: 15px; 
+      margin-bottom: 25px; background: #fafafa;
+    }
+    label { display: block; font-weight: bold; margin-bottom: 8px; color: #4a5568; font-size: 0.9rem; }
+    button { 
+      width: 100%; background: #3182ce; color: white; padding: 16px; 
+      border: none; border-radius: 15px; font-size: 1.1rem; font-weight: bold; 
+      cursor: pointer; transition: background 0.3s, transform 0.2s;
+    }
+    button:hover { background: #2c5282; transform: translateY(-2px); }
+    button:active { transform: translateY(0); }
   </style>
 </head>
 <body>
   <div class="card">
-    <h2 style="text-align: center; margin-top: 0;">⚖️ 護理勞權 AI 律師</h2>
+    <h2>⚖️ 護理勞權 AI 律師</h2>
+    <div class="disclaimer">⚠️ <strong>法律聲明：</strong>鑑定結果由 AI 生成，僅供勞權參考，不具法律拘束力。</div>
     <form action="/analyze" method="post" enctype="multipart/form-data">
-      <textarea name="user_input" placeholder="請描述狀況..."></textarea>
+      <textarea name="user_input" placeholder="請在此描述發生的狀況（例如：交班延時、強制休假、排班爭議...）"></textarea>
       <div class="upload-box">
-        <label style="font-weight: bold; font-size: 0.9rem; margin-left: 10px;">📤 上傳證據：</label>
-        <input type="file" name="attachment" accept="image/*,audio/*" style="padding: 10px;">
+        <label>📤 上傳佐證截圖或錄音：</label>
+        <input type="file" name="attachment" accept="image/*,audio/*" style="width: 100%; font-size: 0.8rem;">
       </div>
       <button type="submit">開始法律鑑定</button>
     </form>
@@ -96,21 +139,35 @@ __END__
 </html>
 
 @@result
-<html>
+<!DOCTYPE html>
+<html lang="zh-TW">
 <head>
+  <meta charset="UTF-8">
   <title>鑑定報告</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; background: #f7fafc; padding: 20px; line-height: 1.7; }
-    .container { background: white; max-width: 600px; margin: 0 auto; padding: 30px; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-    .content { white-space: pre-wrap; word-wrap: break-word; }
+    body { font-family: 'PingFang TC', sans-serif; background: #f7fafc; padding: 20px; color: #2d3748; }
+    .container { 
+      background: white; max-width: 650px; margin: 20px auto; 
+      padding: 40px; border-radius: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+    }
+    .report-title { 
+      border-left: 5px solid #3182ce; padding-left: 15px; margin-bottom: 30px; color: #2b6cb0; 
+    }
+    .content { white-space: pre-wrap; line-height: 1.8; font-size: 1.05rem; }
+    .back-btn { 
+      display: inline-block; margin-top: 30px; color: #3182ce; 
+      text-decoration: none; font-weight: bold; border-bottom: 2px solid transparent;
+      transition: border 0.3s;
+    }
+    .back-btn:hover { border-bottom: 2px solid #3182ce; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h3>🔍 法律鑑定報告：</h3>
+    <div class="report-title"><h3>🔍 護理勞權律師 鑑定報告</h3></div>
     <div class="content"><%= @result %></div>
-    <a href="/" style="display:inline-block; margin-top:20px; color:#3182ce; font-weight:bold; text-decoration:none;">← 返回重新鑑定</a>
+    <a href="/" class="back-btn">← 返回重新鑑定</a>
   </div>
 </body>
 </html>
